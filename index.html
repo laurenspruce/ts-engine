@@ -1,0 +1,18 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>TS Engine Starter</title>
+    <style>
+      html, body { height: 100%; margin: 0; background: #0e0e12; color: #eaeaea; }
+      #hud { position: fixed; left: 8px; top: 8px; font: 12px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace; background: rgba(0,0,0,.4); padding: 6px 8px; border-radius: 6px; }
+      canvas { width: 100vw; height: 100vh; display: block; }
+    </style>
+  </head>
+  <body>
+    <div id="hud">fps: —<br/>draws: —</div>
+    <canvas id="game"></canvas>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
