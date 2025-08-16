@@ -1,86 +1,77 @@
-const VS = `#version 300 es
-precision highp float;
-layout(location=0) in vec2 a_pos;
-layout(location=1) in vec2 a_uv;
-uniform mat3 u_mvp;
-out vec2 v_uv;
-void main(){
-  v_uv = a_uv;
-  vec3 p = u_mvp * vec3(a_pos, 1.0);
-  gl_Position = vec4(p.xy, 0.0, 1.0);
-}`;
-
-const FS = `#version 300 es
-precision highp float;
-in vec2 v_uv;
-out vec4 outColor;
-uniform vec4 u_tint;
-void main(){
-  outColor = vec4(v_uv, 0.5 + 0.5*sin(u_tint.x), 1.0);
-}`;
+// src/render/Renderer2D.ts
+import { spriteVert, spriteFrag } from "../shaders/sprite";   // lowercase
+import type { Texture } from "../engine/Texture";
 
 export class Renderer2D {
   gl: WebGL2RenderingContext;
   program: WebGLProgram;
+
   vao: WebGLVertexArrayObject;
   vbo: WebGLBuffer;
   ibo: WebGLBuffer;
+
   locMvp: WebGLUniformLocation;
+  locUv: WebGLUniformLocation;
+  locTex: WebGLUniformLocation;
   locTint: WebGLUniformLocation;
+
   draws = 0;
 
   constructor(canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl2');
-    if (!gl) throw new Error('WebGL2 not supported');
+    const gl = canvas.getContext("webgl2");
+    if (!gl) throw new Error("WebGL2 not supported");
     this.gl = gl;
-    this.program = this.createProgram(VS, FS);
 
+    this.program = this.createProgram(spriteVert, spriteFrag);
+    gl.useProgram(this.program);
+
+    this.locMvp  = gl.getUniformLocation(this.program, "u_mvp")!;
+    this.locUv   = gl.getUniformLocation(this.program, "u_uv")!;
+    this.locTex  = gl.getUniformLocation(this.program, "u_tex")!;
+    this.locTint = gl.getUniformLocation(this.program, "u_tint")!;
+
+    // Quad geometry: interleaved (x,y,u,v)
     const verts = new Float32Array([
-      // x, y,   u, v
-      -0.5, -0.5, 0, 0,
-       0.5, -0.5, 1, 0,
-       0.5,  0.5, 1, 1,
-      -0.5,  0.5, 0, 1,
+      -0.5, -0.5,  0, 0,
+       0.5, -0.5,  1, 0,
+       0.5,  0.5,  1, 1,
+      -0.5,  0.5,  0, 1,
     ]);
     const indices = new Uint16Array([0,1,2, 0,2,3]);
 
     const vao = gl.createVertexArray()!;
     const vbo = gl.createBuffer()!;
     const ibo = gl.createBuffer()!;
-    gl.bindVertexArray(vao);
+    this.vao = vao; this.vbo = vbo; this.ibo = ibo;
 
+    gl.bindVertexArray(vao);
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 16, 0);
     gl.enableVertexAttribArray(1);
     gl.vertexAttribPointer(1, 2, gl.FLOAT, false, 16, 8);
-
     gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ibo);
     gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, indices, gl.STATIC_DRAW);
-
     gl.bindVertexArray(null);
 
-    this.vao = vao; this.vbo = vbo; this.ibo = ibo;
-    this.locMvp = gl.getUniformLocation(this.program, 'u_mvp')!;
-    this.locTint = gl.getUniformLocation(this.program, 'u_tint')!;
-
     gl.clearColor(0.06, 0.06, 0.07, 1.0);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
-  private createShader(type: number, src: string) {
+  private createShader(type: number, src: string): WebGLShader {
     const gl = this.gl;
     const sh = gl.createShader(type)!;
     gl.shaderSource(sh, src);
     gl.compileShader(sh);
     if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) {
-      throw new Error(gl.getShaderInfoLog(sh) || 'shader error');
+      throw new Error(gl.getShaderInfoLog(sh) || "shader compile error");
     }
     return sh;
   }
 
-  private createProgram(vsSrc: string, fsSrc: string) {
+  private createProgram(vsSrc: string, fsSrc: string): WebGLProgram {
     const gl = this.gl;
     const vs = this.createShader(gl.VERTEX_SHADER, vsSrc);
     const fs = this.createShader(gl.FRAGMENT_SHADER, fsSrc);
@@ -89,77 +80,81 @@ export class Renderer2D {
     gl.attachShader(prog, fs);
     gl.linkProgram(prog);
     if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) {
-      throw new Error(gl.getProgramInfoLog(prog) || 'link error');
+      throw new Error(gl.getProgramInfoLog(prog) || "program link error");
     }
     gl.deleteShader(vs); gl.deleteShader(fs);
     return prog;
   }
 
-  resize() {
+  private resizeViewport() {
     const gl = this.gl;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    let w: number, h: number;
-    if (gl.canvas instanceof HTMLCanvasElement) {
-      w = Math.floor(gl.canvas.clientWidth * dpr);
-      h = Math.floor(gl.canvas.clientHeight * dpr);
-      if (gl.canvas.width !== w || gl.canvas.height !== h) {
-        gl.canvas.width = w;
-        gl.canvas.height = h;
-      }
-    } else {
-      // OffscreenCanvas fallback
-      w = Math.floor(gl.canvas.width * dpr);
-      h = Math.floor(gl.canvas.height * dpr);
-      gl.canvas.width = w;
-      gl.canvas.height = h;
+    const w = Math.floor((gl.canvas as HTMLCanvasElement).clientWidth * dpr);
+    const h = Math.floor((gl.canvas as HTMLCanvasElement).clientHeight * dpr);
+    if (gl.canvas.width !== w || gl.canvas.height !== h) {
+      gl.canvas.width = w; gl.canvas.height = h;
     }
     gl.viewport(0, 0, w, h);
   }
 
-  ortho2D(): Float32Array {
+  private ortho2D(): Float32Array {
     const gl = this.gl;
-    const w = (gl.canvas as HTMLCanvasElement).width;
-    const h = (gl.canvas as HTMLCanvasElement).height;
+    const w = gl.canvas.width as number;
+    const h = gl.canvas.height as number;
     const aspect = w / h;
     const l = -aspect, r = aspect, b = -1, t = 1;
     return new Float32Array([
-      2/(r-l), 0,       0,
-      0,       2/(t-b), 0,
+      2/(r-l), 0,        0,
+      0,       2/(t-b),  0,
       -(r+l)/(r-l), -(t+b)/(t-b), 1,
     ]);
   }
 
-  drawRotatingQuad(angle: number) {
+  private mul3x3(a: Float32Array, b: Float32Array): Float32Array {
+    const m = new Float32Array(9);
+    for (let r=0;r<3;r++) for (let c=0;c<3;c++) {
+      m[c + r*3] = a[r*3+0]*b[c+0] + a[r*3+1]*b[c+3] + a[r*3+2]*b[c+6];
+    }
+    return m;
+  }
+
+  // Draw a textured sprite centered at (x,y); size (w,h) in world units.
+  // UV sub-rect in normalized [0..1] (0,0,1,1) = full image.
+  sprite(
+    tex: Texture,
+    x: number, y: number,
+    w: number, h: number,
+    rot = 0,
+    u0 = 0, v0 = 0, u1 = 1, v1 = 1,
+    tint: [number, number, number, number] = [1,1,1,1]
+  ) {
     const gl = this.gl;
-    this.resize();
+    this.resizeViewport();
     gl.clear(gl.COLOR_BUFFER_BIT);
 
     gl.useProgram(this.program);
     gl.bindVertexArray(this.vao);
 
-    const m = this.ortho2D();
-    const c = Math.cos(angle), s = Math.sin(angle);
-    const scale = 0.6;
-    const rotScale = new Float32Array([
-      c*scale,  s*scale, 0,
-      -s*scale, c*scale, 0,
-      0,        0,       1,
+    const ortho = this.ortho2D();
+    const c = Math.cos(rot), s = Math.sin(rot);
+    const trs = new Float32Array([
+      c*w,  s*w,  0,
+     -s*h,  c*h,  0,
+        x,    y,  1,
     ]);
-
-    const a = m, b = rotScale;
-    const mvp = new Float32Array(9);
-    for (let row = 0; row < 3; row++) {
-      for (let col = 0; col < 3; col++) {
-        mvp[col + row*3] = a[row*3+0]*b[col+0] + a[row*3+1]*b[col+3] + a[row*3+2]*b[col+6];
-      }
-    }
+    const mvp = this.mul3x3(ortho, trs);
 
     gl.uniformMatrix3fv(this.locMvp, false, mvp);
-    gl.uniform4f(this.locTint, angle, 0, 0, 1);
+    gl.uniform4f(this.locUv, u0, v0, u1, v1);
+    gl.uniform4f(this.locTint, tint[0], tint[1], tint[2], tint[3]);
+
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, tex.handle);
+    gl.uniform1i(this.locTex, 0);
 
     gl.drawElements(gl.TRIANGLES, 6, gl.UNSIGNED_SHORT, 0);
-    this.draws = 1;
-
     gl.bindVertexArray(null);
+
+    this.draws = 1;
   }
 }
